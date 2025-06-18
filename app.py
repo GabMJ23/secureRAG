@@ -1,8 +1,10 @@
 import streamlit as st
 import time
-from components.wizard_state import init_session_state, get_progress
-from components.ui_components import render_progress_bar, render_card, render_step_navigation
-from components.generator import generate_secure_kit
+import zipfile
+import tempfile
+import os
+from datetime import datetime
+from jinja2 import Template
 
 # Configuration de la page
 st.set_page_config(
@@ -12,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS personnalisé pour reproduire l'interface React
+# CSS personnalisé
 st.markdown("""
 <style>
     .main-header {
@@ -39,26 +41,6 @@ st.markdown("""
         margin-bottom: 1rem;
     }
     
-    .option-card {
-        border: 2px solid #e5e7eb;
-        border-radius: 0.75rem;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        cursor: pointer;
-        transition: all 0.3s;
-        background: white;
-    }
-    
-    .option-card:hover {
-        border-color: #3b82f6;
-        background: #f8fafc;
-    }
-    
-    .option-card.selected {
-        border-color: #3b82f6;
-        background: #eff6ff;
-    }
-    
     .progress-container {
         background: white;
         padding: 1rem;
@@ -75,20 +57,6 @@ st.markdown("""
         margin: 1rem 0;
     }
     
-    .alert-success {
-        background: #d1fae5;
-        border: 1px solid #10b981;
-        color: #065f46;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 1rem 0;
-    }
-    
-    .generation-container {
-        text-align: center;
-        padding: 3rem;
-    }
-    
     .config-summary {
         background: linear-gradient(135deg, #ddd6fe 0%, #e0e7ff 100%);
         padding: 1.5rem;
@@ -103,7 +71,6 @@ st.markdown("""
     .stDeployButton {display:none;}
     footer {visibility: hidden;}
     
-    /* Style des boutons */
     .stButton > button {
         background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
         color: white;
@@ -121,38 +88,276 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def main():
-    # Initialisation de l'état
-    init_session_state()
-    
-    # En-tête principal
-    st.markdown("""
-    <div class="main-header">
-        <h1>🚀 Secure RAG Kit Generator</h1>
-        <p>Configurez votre moteur RAG sécurisé en quelques étapes</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Navigation par onglets (simulation des étapes)
+# Fonctions utilitaires
+def init_session_state():
+    """Initialise l'état de session"""
     if 'current_step' not in st.session_state:
         st.session_state.current_step = 1
-    
-    # Affichage selon l'étape
-    if st.session_state.current_step == 1:
-        render_welcome()
-    elif st.session_state.current_step == 2:
-        render_objective()
-    elif st.session_state.current_step == 3:
-        render_data_types()
-    elif st.session_state.current_step == 4:
-        render_security()
-    elif st.session_state.current_step == 5:
-        render_summary()
-    elif st.session_state.current_step == 6:
-        render_generating()
-    elif st.session_state.current_step == 7:
-        render_complete()
+    if 'objective' not in st.session_state:
+        st.session_state.objective = ''
+    if 'data_types' not in st.session_state:
+        st.session_state.data_types = []
+    if 'security_level' not in st.session_state:
+        st.session_state.security_level = []
 
+def render_progress_bar(current_step, total_steps):
+    """Affiche une barre de progression"""
+    progress_percentage = (current_step / total_steps) * 100
+    
+    st.markdown(f"""
+    <div class="progress-container">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.9rem; color: #6b7280;">Étape {current_step} sur {total_steps}</span>
+            <span style="font-size: 0.9rem; color: #6b7280;">{int(progress_percentage)}% terminé</span>
+        </div>
+        <div style="width: 100%; background-color: #e5e7eb; border-radius: 1rem; height: 0.5rem;">
+            <div style="
+                width: {progress_percentage}%; 
+                background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); 
+                border-radius: 1rem; 
+                height: 100%; 
+                transition: width 0.3s ease;
+            "></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def generate_terraform_config(config):
+    """Génère la configuration Terraform"""
+    template = Template("""
+# Configuration Terraform pour RAG Sécurisé
+# Généré automatiquement par Secure RAG Kit Generator
+
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+# Resource Group
+resource "azurerm_resource_group" "rag_rg" {
+  name     = "rg-secure-rag-{{ objective }}"
+  location = "West Europe"
+  
+  tags = {
+    Environment = "production"
+    Purpose     = "SecureRAG"
+    DataTypes   = "{{ data_types_str }}"
+  }
+}
+
+{% if 'encryption' in security_level %}
+# Key Vault pour la gestion des clés
+resource "azurerm_key_vault" "rag_kv" {
+  name                = "kv-secure-rag-${random_string.suffix.result}"
+  location            = azurerm_resource_group.rag_rg.location
+  resource_group_name = azurerm_resource_group.rag_rg.name
+  tenant_id          = data.azurerm_client_config.current.tenant_id
+  sku_name           = "premium"
+
+  enabled_for_deployment          = true
+  enabled_for_disk_encryption     = true
+  enabled_for_template_deployment = true
+}
+{% endif %}
+
+# Azure OpenAI Service
+resource "azurerm_cognitive_account" "openai" {
+  name                = "openai-secure-rag-${random_string.suffix.result}"
+  location            = azurerm_resource_group.rag_rg.location
+  resource_group_name = azurerm_resource_group.rag_rg.name
+  kind                = "OpenAI"
+  sku_name           = "S0"
+  
+  tags = {
+    Environment = "production"
+    DataSensitivity = "{{ data_sensitivity }}"
+  }
+}
+
+resource "random_string" "suffix" {
+  length  = 8
+  special = false
+  upper   = false
+}
+
+data "azurerm_client_config" "current" {}
+
+# Outputs
+output "resource_group_name" {
+  value = azurerm_resource_group.rag_rg.name
+}
+
+output "openai_endpoint" {
+  value = azurerm_cognitive_account.openai.endpoint
+  sensitive = true
+}
+""")
+    
+    data_sensitivity = "High" if any(dt in config.get('data_types', []) for dt in ['personal', 'financial', 'legal']) else "Medium"
+    
+    return template.render(
+        objective=config.get('objective', 'general'),
+        data_types_str=','.join(config.get('data_types', [])),
+        security_level=config.get('security_level', []),
+        data_sensitivity=data_sensitivity
+    )
+
+def generate_weaviate_config(config):
+    """Génère la configuration Weaviate"""
+    return f"""
+# Configuration Weaviate pour RAG Sécurisé
+version: '3.8'
+
+services:
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: '{"false" if "sso" in config.get("security_level", []) else "true"}'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-openai'
+      ENABLE_MODULES: 'text2vec-openai,qna-openai'
+      OPENAI_APIKEY: '${{OPENAI_API_KEY}}'
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+
+volumes:
+  weaviate_data:
+"""
+
+def generate_readme(config):
+    """Génère le README"""
+    objective_labels = {
+        'search': 'Moteur de recherche interne',
+        'assistant': 'Assistant conversationnel',
+        'synthesis': 'Génération de synthèses',
+        'analysis': 'Analyse de documents'
+    }
+    
+    data_type_labels = {
+        'hr': 'RH', 'legal': 'Juridique', 'financial': 'Financier',
+        'personal': 'Personnel', 'public': 'Public', 'technical': 'Technique'
+    }
+    
+    return f"""
+# 🚀 Secure RAG Kit - Configuration Personnalisée
+
+## 📋 Vue d'ensemble
+
+Ce kit contient une configuration complète et sécurisée pour déployer un système RAG.
+
+### 🎯 Configuration Générée
+
+- **Objectif** : {objective_labels.get(config.get('objective'), 'Non défini')}
+- **Types de données** : {', '.join([data_type_labels.get(dt, dt) for dt in config.get('data_types', [])])}
+- **Sécurité** : {', '.join(config.get('security_level', []))}
+
+## 📦 Contenu du Kit
+
+- 🏗️ main.tf - Infrastructure Terraform
+- 🗄️ weaviate-config.yaml - Configuration base vectorielle  
+- 📄 README.md - Guide d'utilisation
+
+## 🚀 Démarrage Rapide
+
+1. Configurer les variables d'environnement Azure
+2. Déployer avec Terraform : `terraform init && terraform apply`
+3. Lancer Weaviate : `docker-compose -f weaviate-config.yaml up -d`
+
+## 🛡️ Sécurité
+
+{'⚠️ Configuration avec données sensibles - Respectez les obligations RGPD' if any(dt in config.get('data_types', []) for dt in ['personal', 'financial']) else '✅ Configuration sécurisée standard'}
+
+## 📞 Support
+
+- Support technique : support@secure-rag-kit.com
+- Questions sécurité : security@secure-rag-kit.com
+
+*Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')} par Secure RAG Kit Generator*
+"""
+
+def generate_secure_kit(config):
+    """Génère un kit RAG sécurisé"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        files_generated = []
+        
+        # 1. Configuration Terraform
+        terraform_content = generate_terraform_config(config)
+        terraform_path = os.path.join(temp_dir, "main.tf")
+        with open(terraform_path, 'w', encoding='utf-8') as f:
+            f.write(terraform_content)
+        files_generated.append(("main.tf", terraform_path))
+        
+        # 2. Configuration Weaviate
+        weaviate_content = generate_weaviate_config(config)
+        weaviate_path = os.path.join(temp_dir, "weaviate-config.yaml")
+        with open(weaviate_path, 'w', encoding='utf-8') as f:
+            f.write(weaviate_content)
+        files_generated.append(("weaviate-config.yaml", weaviate_path))
+        
+        # 3. README
+        readme_content = generate_readme(config)
+        readme_path = os.path.join(temp_dir, "README.md")
+        with open(readme_path, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        files_generated.append(("README.md", readme_path))
+        
+        # Créer le fichier ZIP
+        zip_path = os.path.join(temp_dir, "secure-rag-kit.zip")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for filename, filepath in files_generated:
+                zipf.write(filepath, filename)
+        
+        # Lire le contenu du ZIP
+        with open(zip_path, 'rb') as f:
+            zip_content = f.read()
+        
+        return zip_content
+
+def get_config_summary():
+    """Génère un résumé de la configuration"""
+    summary = "🎯 Configuration personnalisée :\n\n"
+    
+    objective_map = {
+        'search': '✅ Moteur de recherche interne optimisé',
+        'assistant': '✅ Assistant conversationnel intelligent',
+        'synthesis': '✅ Générateur de synthèses automatique',
+        'analysis': '✅ Analyseur de documents avancé'
+    }
+    
+    if st.session_state.get('objective'):
+        summary += objective_map.get(st.session_state.objective, '') + '\n'
+    
+    data_types = st.session_state.get('data_types', [])
+    if 'personal' in data_types:
+        summary += '✅ Protection données personnelles (RGPD)\n'
+    if 'financial' in data_types:
+        summary += '✅ Conformité financière renforcée\n'
+    
+    security = st.session_state.get('security_level', [])
+    if 'encryption' in security:
+        summary += '✅ Chiffrement bout-en-bout activé\n'
+    if 'sso' in security:
+        summary += '✅ Authentification SSO configurée\n'
+    if 'audit' in security:
+        summary += '✅ Journalisation complète des accès\n'
+    
+    summary += '\n✅ Configuration sécurisée prête pour déploiement'
+    
+    return summary
+
+# Pages du wizard
 def render_welcome():
     st.markdown("""
     <div class="step-card">
@@ -177,7 +382,6 @@ def render_welcome():
             st.rerun()
 
 def render_objective():
-    # Barre de progression
     render_progress_bar(1, 4)
     
     st.markdown("""
@@ -196,9 +400,6 @@ def render_objective():
     ]
     
     for obj in objectives:
-        selected = st.session_state.get('objective') == obj['value']
-        css_class = "option-card selected" if selected else "option-card"
-        
         if st.button(f"{obj['label']}\n{obj['desc']}", key=obj['value'], use_container_width=True):
             st.session_state.objective = obj['value']
             st.rerun()
@@ -224,9 +425,6 @@ def render_data_types():
         <p style="text-align: center; color: #6b7280;">Cochez les types de données que vous comptez intégrer</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    if 'data_types' not in st.session_state:
-        st.session_state.data_types = []
     
     data_types = [
         {"value": "hr", "label": "👥 RH", "desc": "Fiches de poste, CV, entretiens", "risk": "medium"},
@@ -286,9 +484,6 @@ def render_security():
     </div>
     """, unsafe_allow_html=True)
     
-    if 'security_level' not in st.session_state:
-        st.session_state.security_level = []
-    
     security_options = [
         {"value": "sso", "label": "🔑 Authentification SSO", "desc": "Azure AD, Google, SAML", "priority": "high"},
         {"value": "audit", "label": "📋 Journalisation des accès", "desc": "Logs auditables et traçabilité", "priority": "high"},
@@ -338,34 +533,11 @@ def render_summary():
     </div>
     """, unsafe_allow_html=True)
     
-    # Générer le résumé
-    summary = "🎯 Configuration personnalisée :\n\n"
-    
-    if st.session_state.get('objective') == 'search':
-        summary += "✅ Moteur de recherche interne optimisé\n"
-    elif st.session_state.get('objective') == 'assistant':
-        summary += "✅ Assistant conversationnel intelligent\n"
-    elif st.session_state.get('objective') == 'analysis':
-        summary += "✅ Analyseur de documents avancé\n"
-    
-    if 'personal' in st.session_state.get('data_types', []):
-        summary += "✅ Protection données personnelles (RGPD)\n"
-    if 'encryption' in st.session_state.get('security_level', []):
-        summary += "✅ Chiffrement bout-en-bout activé\n"
-    if 'sso' in st.session_state.get('security_level', []):
-        summary += "✅ Authentification SSO configurée\n"
-    
-    summary += "✅ Configuration sécurisée prête pour déploiement\n"
+    summary = get_config_summary()
     
     st.markdown(f"""
     <div class="config-summary">
         {summary}
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div style="text-align: center; margin: 2rem 0;">
-        <p style="color: #6b7280;">✨ Configuration intelligente prête pour génération</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -384,7 +556,7 @@ def render_summary():
 
 def render_generating():
     st.markdown("""
-    <div class="generation-container">
+    <div style="text-align: center; padding: 3rem;">
         <div class="step-icon">⚡</div>
         <h2>Génération de votre kit intelligent...</h2>
         <p style="color: #6b7280;">Notre IA analyse vos exigences et génère une configuration sur-mesure</p>
@@ -413,30 +585,42 @@ def render_generating():
 
 def render_complete():
     st.markdown("""
-    <div class="generation-container">
+    <div style="text-align: center; padding: 3rem;">
         <div class="step-icon">🎉</div>
         <h2 style="color: #059669;">Kit généré avec succès !</h2>
     </div>
     """, unsafe_allow_html=True)
     
     st.markdown("""
-    <div class="alert-success">
+    <div style="background: #d1fae5; border: 1px solid #10b981; color: #065f46; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0;">
         <h4>🎁 Votre kit personnalisé contient :</h4>
         <ul>
             <li>☁️ Configuration Terraform</li>
             <li>🗄️ Setup base vectorielle</li>
-            <li>🛡️ Checklist sécurité</li>
             <li>📖 Guide de déploiement</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
     
+    # Génération du kit
+    config = {
+        'objective': st.session_state.get('objective', ''),
+        'data_types': st.session_state.get('data_types', []),
+        'security_level': st.session_state.get('security_level', [])
+    }
+    
+    zip_content = generate_secure_kit(config)
+    
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        if st.button("📥 Télécharger le kit", use_container_width=True):
-            # Ici vous pouvez déclencher le téléchargement réel
-            st.success("Kit téléchargé ! 🎉")
+        st.download_button(
+            label="📥 Télécharger le kit",
+            data=zip_content,
+            file_name="secure-rag-kit.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
         
         if st.button("🔄 Créer un nouveau kit", use_container_width=True):
             # Reset de l'état
@@ -445,6 +629,34 @@ def render_complete():
                     del st.session_state[key]
             st.session_state.current_step = 1
             st.rerun()
+
+def main():
+    # Initialisation de l'état
+    init_session_state()
+    
+    # En-tête principal
+    st.markdown("""
+    <div class="main-header">
+        <h1>🚀 Secure RAG Kit Generator</h1>
+        <p>Configurez votre moteur RAG sécurisé en quelques étapes</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Affichage selon l'étape
+    if st.session_state.current_step == 1:
+        render_welcome()
+    elif st.session_state.current_step == 2:
+        render_objective()
+    elif st.session_state.current_step == 3:
+        render_data_types()
+    elif st.session_state.current_step == 4:
+        render_security()
+    elif st.session_state.current_step == 5:
+        render_summary()
+    elif st.session_state.current_step == 6:
+        render_generating()
+    elif st.session_state.current_step == 7:
+        render_complete()
 
 if __name__ == "__main__":
     main()
